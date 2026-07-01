@@ -3,9 +3,7 @@ Header Component Module
 ========================
 Enterprise-grade top navigation bar with glassmorphism styling,
 dynamic timestamp updates, and responsive layout management.
-Integrates seamlessly with Streamlit's native header while maintaining
-custom branding and professional spacing.
-FIXED: Corrected theme constant references and JS safety checks.
+FIXED: Corrected HTML structure to prevent raw code display.
 """
 
 import streamlit as st
@@ -18,7 +16,6 @@ def render_header(last_updated: str = "Loading...") -> None:
     
     Args:
         last_updated: Timestamp string for data freshness indicator.
-                      Defaults to 'Loading...' during initial render.
     """
     st.markdown(f"""
         <div style="
@@ -31,7 +28,6 @@ def render_header(last_updated: str = "Loading...") -> None:
             margin-bottom: 2.5rem;
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
             border-bottom: 1px solid rgba(255,255,255,0.08);
-            backdrop-filter: blur(10px);
         ">
             <div style="display: flex; align-items: center; gap: 1.5rem;">
                 <div style="
@@ -60,7 +56,7 @@ def render_header(last_updated: str = "Loading...") -> None:
                 </div>
             </div>
             
-            <div style="text-align: right;">
+            <div style="text-align: right; min-width: 150px;">
                 <div style="
                     color: {THEME.TEXT_LIGHT};
                     font-size: 0.75rem;
@@ -84,10 +80,6 @@ def render_header(last_updated: str = "Loading...") -> None:
 def update_timestamp_js(new_timestamp: str) -> None:
     """
     Updates the header timestamp without full page rerender.
-    Uses JavaScript DOM manipulation for smooth UX.
-    
-    Args:
-        new_timestamp: Formatted timestamp string to display.
     """
     st.components.v1.html(f"""
         <script>
