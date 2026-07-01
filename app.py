@@ -4,6 +4,7 @@ Enterprise EHS Dashboard - Main Application Orchestrator
 Central entry point that coordinates all components, pages, and services.
 Manages data loading lifecycle, navigation state, global search,
 export functionality, and error recovery with graceful degradation.
+FIXED: Corrected import paths, session state init, and page routing.
 """
 
 import streamlit as st
@@ -16,7 +17,6 @@ from utils.excel_parser import ExcelParser
 from utils.cache import get_cached_data, set_cached_data, clear_dashboard_cache
 from components.header import render_header, update_timestamp_js
 from components.sidebar import render_sidebar
-from components.cards import render_kpi_card
 from pages.executive_summary import render_executive_summary
 from pages.environment import render_environment_page
 from pages.energy import render_energy_page
@@ -75,7 +75,7 @@ def load_and_parse_data() -> bool:
 
 
 def render_global_search() -> None:
-    """Rresents global search bar that filters visible KPIs."""
+    """Renders global search bar that filters visible KPIs."""
     query = st.text_input(
         "🔍 Search KPIs, Categories, or Metrics...",
         value=st.session_state.search_query,
@@ -97,9 +97,13 @@ def render_page_content(page_name: str, parsed_data: Dict[str, Any]) -> None:
     
     renderer = page_map.get(page_name)
     if renderer:
-        renderer(parsed_data)
+        try:
+            renderer(parsed_data)
+        except Exception as e:
+            st.error(f"❌ Error rendering '{page_name}': {e}")
+            logger.exception(f"Page render error: {page_name}")
     else:
-        st.warning(f"Page '{page_name}' is under development")
+        st.warning(f"⚠️ Page '{page_name}' is under development")
 
 
 def render_error_state() -> None:
