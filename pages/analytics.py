@@ -118,9 +118,10 @@ def _render_correlation_analysis(env_sheet, hs_sheet) -> None:
     )
     st.plotly_chart(fig, use_container_width=True)
     
-    st.caption("Values range from -1 (perfect negative) to +1 (perfect positive). 
-               Red indicates positive correlation; blue indicates negative.")
-
+  st.caption(
+    "Values range from -1 (perfect negative) to +1 (perfect positive). "
+    "Red indicates positive correlation; blue indicates negative."
+)
 
 def _render_anomaly_detection(env_sheet, hs_sheet) -> None:
     """Detects statistical outliers using Z-score method across all KPIs."""
