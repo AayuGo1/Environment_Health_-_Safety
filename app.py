@@ -81,49 +81,41 @@ def inject_custom_css():
 
 inject_custom_css()
 
-# ==============================================================================
-# DATA LOADING ENGINE
-# ==============================================================================
-@st.cache_data(ttl=3600, show_spinner="Fetching latest data from GitHub...")
+@st.cache_data(ttl=3600)
 def load_data_from_github():
-    """Downloads and intelligently parses the Excel workbook."""
     try:
-        resp = requests.get(RAW_URL)
+        st.write("🔄 Fetching data from GitHub...")
+        resp = requests.get(RAW_URL, timeout=30)
         resp.raise_for_status()
+        
+        st.write("✅ File downloaded. Parsing Excel...")
         xls = pd.ExcelFile(io.BytesIO(resp.content))
         
-        data = {}
-        for sheet_name in xls.sheet_names:
-            df = pd.read_excel(xls, sheet_name=sheet_name, header=[0, 1, 2])
-            
-            # Flatten multi-index columns into descriptive names
-            flat_cols = []
-            for col in df.columns:
-                parts = [str(c).strip() for c in col if str(c).strip() not in ('nan', 'None', '')]
-                flat_cols.append(" | ".join(parts) if parts else "Unnamed")
-            df.columns = flat_cols
-            
-            # Dynamically identify month columns
-            month_cols = [c for c in df.columns if re.match(MONTH_PATTERN, c.split('|')[-1].strip(), re.IGNORECASE)]
-            
-            # Identify YTD and Target columns
-            ytd_col = next((c for c in df.columns if '|YTD' in c or c.strip() == 'YTD'), None)
-            target_col = next((c for c in df.columns if '|Target' in c or c.strip() == 'Target'), None)
-            
-            # Identify KPI name column (first non-month column)
-            kpi_name_col = next((c for c in df.columns if c not in month_cols + ([ytd_col] if ytd_col else []) + ([target_col] if target_col else [])), None)
-            
-            data[sheet_name] = {
-                "df": df,
-                "month_cols": month_cols,
-                "ytd_col": ytd_col,
-                "target_col": target_col,
-                "kpi_name_col": kpi_name_col
-            }
-            
-        return data, datetime.now().strftime("%d-%b-%y")
+        # Parse Environment Sheet
+        env_df = pd.read_excel(xls, sheet_name="Environment", header=[0, 1, 2])
+        st.write(f"📊 Environment sheet loaded: {env_df.shape}")
+        
+        # Flatten columns safely
+        flat_cols = []
+        for col in env_df.columns:
+            parts = [str(c).strip() for c in col if str(c).strip() not in ('nan', 'None', '')]
+            flat_cols.append(" | ".join(parts) if parts else "Unnamed")
+        env_df.columns = flat_cols
+        
+        # Identify month columns dynamically
+        month_pattern = r'^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{2}$'
+        month_cols = [c for c in env_df.columns if re.search(month_pattern, c.split('|')[-1].strip(), re.IGNORECASE)]
+        st.write(f"📅 Detected {len(month_cols)} month columns: {month_cols[:3]}...")
+        
+        return {"environment": env_df, "month_cols": month_cols}, datetime.now().strftime("%d-%b-%y")
+        
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ GitHub Connection Failed: {e}")
+        st.info("Check if repo is public or if GITHUB_TOKEN is set in Secrets.")
+        return None, None
     except Exception as e:
-        st.error(f"❌ Failed to load data: {e}")
+        st.error(f"❌ Data Parsing Error: {e}")
+        st.exception(e)  # Shows full traceback in browser
         return None, None
 
 # ==============================================================================
