@@ -2,9 +2,7 @@
 Enterprise EHS Dashboard - Main Application Orchestrator
 ==========================================================
 Central entry point that coordinates all components, pages, and services.
-Manages data loading lifecycle, navigation state, global search,
-export functionality, and error recovery with graceful degradation.
-FIXED: Corrected import paths, session state init, and page routing.
+FIXED: Added robust error handling for page rendering and data validation.
 """
 
 import streamlit as st
@@ -24,10 +22,7 @@ from pages.health_safety import render_health_safety_page
 from pages.analytics import render_analytics_page
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -46,10 +41,7 @@ def initialize_session_state() -> None:
 
 
 def load_and_parse_data() -> bool:
-    """
-    Loads Excel from GitHub and parses into normalized structures.
-    Returns True on success, False on failure.
-    """
+    """Loads Excel from GitHub and parses into normalized structures."""
     loader = GitHubDataLoader()
     result = loader.load_workbook()
     
@@ -75,18 +67,18 @@ def load_and_parse_data() -> bool:
 
 
 def render_global_search() -> None:
-    """Renders global search bar that filters visible KPIs."""
+    """Renders global search bar."""
     query = st.text_input(
-        "🔍 Search KPIs, Categories, or Metrics...",
+        "🔍 Search KPIs...",
         value=st.session_state.search_query,
-        placeholder="e.g., Energy, Water, Fatality, UA/UC...",
+        placeholder="e.g., Energy, Water, Fatality...",
         label_visibility="collapsed",
     )
     st.session_state.search_query = query
 
 
 def render_page_content(page_name: str, parsed_data: Dict[str, Any]) -> None:
-    """Routes to appropriate page renderer based on selection."""
+    """Routes to appropriate page renderer with error handling."""
     page_map = {
         "Executive Summary": render_executive_summary,
         "Environment": render_environment_page,
@@ -98,10 +90,14 @@ def render_page_content(page_name: str, parsed_data: Dict[str, Any]) -> None:
     renderer = page_map.get(page_name)
     if renderer:
         try:
-            renderer(parsed_data)
+            if parsed_data:
+                renderer(parsed_data)
+            else:
+                st.warning("⚠️ No data available. Please refresh.")
         except Exception as e:
-            st.error(f"❌ Error rendering '{page_name}': {e}")
+            st.error(f"❌ Error loading '{page_name}': {str(e)}")
             logger.exception(f"Page render error: {page_name}")
+            st.code(str(e), language="python")
     else:
         st.warning(f"⚠️ Page '{page_name}' is under development")
 
@@ -118,16 +114,12 @@ def render_error_state() -> None:
             <h2 style="color: {THEME.TEXT_LIGHT};">Dashboard Unavailable</h2>
             <p style="color: {THEME.TEXT_MUTED}; max-width: 600px; margin: 1rem auto;">
                 {st.session_state.load_error}<br/><br/>
-                Please verify your GitHub repository is accessible and the Excel file exists.
-                Click 'Refresh Data' to retry.
+                Please verify your GitHub repository is accessible.
             </p>
         </div>
     """, unsafe_allow_html=True)
 
 
-# ==============================================================================
-# MAIN APPLICATION ENTRY POINT
-# ==============================================================================
 def main() -> None:
     """Primary application execution flow."""
     st.set_page_config(
@@ -145,7 +137,7 @@ def main() -> None:
     # Global Search Bar
     render_global_search()
     
-    # Load Data (with cache check)
+    # Load Data
     if st.session_state.parsed_data is None:
         with st.spinner("Loading EHS data from GitHub..."):
             success = load_and_parse_data()
@@ -177,14 +169,9 @@ def main() -> None:
     # Render Selected Page
     render_page_content(st.session_state.active_page, parsed_data)
     
-    # Footer
+    # Footer / Debug
     st.divider()
-    st.markdown(f"""
-        <div style="text-align: center; padding: 1rem; color: {THEME.TEXT_MUTED}; font-size: 0.8rem;">
-            Enterprise EHS Dashboard v1.0 | Last Refresh: {st.session_state.last_updated or 'N/A'} | 
-            Data Source: GitHub Repository | Built with Streamlit & Plotly
-        </div>
-    """, unsafe_allow_html=True)
+    st.caption(f"Last Refresh: {st.session_state.last_updated or 'N/A'} | v1.0")
 
 
 if __name__ == "__main__":
