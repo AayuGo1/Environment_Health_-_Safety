@@ -5,10 +5,11 @@ Enterprise-grade top navigation bar with glassmorphism styling,
 dynamic timestamp updates, and responsive layout management.
 Integrates seamlessly with Streamlit's native header while maintaining
 custom branding and professional spacing.
+FIXED: Corrected theme constant references and JS safety checks.
 """
 
 import streamlit as st
-from config import THEME, PAGE
+from config import THEME
 
 
 def render_header(last_updated: str = "Loading...") -> None:
@@ -25,7 +26,7 @@ def render_header(last_updated: str = "Loading...") -> None:
             justify-content: space-between; 
             align-items: center;
             padding: 1.2rem 2rem;
-            background: linear-gradient(135deg, {THEME.BG_SECONDARY} 0%, {THEME.BG_TERTIARY} 100%);
+            background: linear-gradient(135deg, {THEME.BG_SECONDARY} 0%, #2D3748 100%);
             border-radius: 0 0 20px 20px;
             margin-bottom: 2.5rem;
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
@@ -91,6 +92,8 @@ def update_timestamp_js(new_timestamp: str) -> None:
     st.components.v1.html(f"""
         <script>
             const el = document.getElementById('header-timestamp');
-            if (el) el.innerText = '{new_timestamp}';
+            if (el) {{
+                el.innerText = '{new_timestamp}';
+            }}
         </script>
     """, height=0)
