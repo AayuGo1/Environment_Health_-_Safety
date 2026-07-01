@@ -4,11 +4,12 @@ Donut Chart Module
 Professional composition visualization with centered hole,
 percentage+label annotations, and vertical legend positioning.
 Optimized for waste streams, energy sources, and category splits.
+FIXED: Corrected theme references and added robust empty data handling.
 """
 
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import List, Optional
+from typing import Optional
 import pandas as pd
 
 from config import THEME
@@ -38,22 +39,43 @@ def render_donut_chart(
     Returns:
         Plotly Figure object ready for st.plotly_chart().
     """
+    # Validate inputs
+    if df.empty or values_col not in df.columns or names_col not in df.columns:
+        fig = go.Figure()
+        fig.add_annotation(text="No data available", showarrow=False)
+        fig.update_layout(height=height)
+        return fig
+    
+    # Clamp hole size to valid range
+    safe_hole = max(0.0, min(1.0, hole_size))
+    
+    # Filter out zero/negative values
+    plot_df = df[df[values_col] > 0].copy()
+    if plot_df.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="All values are zero", showarrow=False)
+        fig.update_layout(height=height)
+        return fig
+    
+    # Define enterprise color sequence
+    color_seq = [
+        THEME.CHART_PRIMARY,      # Blue
+        THEME.CHART_SECONDARY,    # Teal
+        THEME.CHART_ACCENT_1,     # Purple
+        THEME.CHART_ACCENT_2,     # Gold
+        THEME.STATUS_OFF_TRACK,   # Orange/Red for warnings
+        "#718096",                # Grey for misc
+    ]
+    
     fig = px.pie(
-        df,
+        plot_df,
         values=values_col,
         names=names_col,
         title=title,
-        hole=hole_size,
+        hole=safe_hole,
         template="plotly_white",
         height=height,
-        color_discrete_sequence=[
-            THEME.CHART_PRIMARY,
-            THEME.CHART_SECONDARY,
-            THEME.CHART_ACCENT_1,
-            THEME.CHART_ACCENT_2,
-            THEME.TEXT_WARNING,
-            THEME.TEXT_DANGER,
-        ],
+        color_discrete_sequence=color_seq,
     )
     
     # Configure segment labels
@@ -63,6 +85,7 @@ def render_donut_chart(
         textinfo=text_info,
         insidetextfont=dict(size=11, color="white"),
         marker=dict(line=dict(color=THEME.CARD_BG, width=2)),
+        hovertemplate="<b>%{label}</b><br>%{value:,.1f} (%{percent})<extra></extra>",
     )
     
     # Professional legend positioning
@@ -83,10 +106,10 @@ def render_donut_chart(
             dict(
                 text="Total",
                 x=0.5, y=0.5,
-                font=dict(size=14, color=THEME.TEXT_DARK),
+                font=dict(size=14, color=THEME.TEXT_DARK, family="Inter, sans-serif"),
                 showarrow=False,
             )
-        ] if hole_size > 0.4 else [],
+        ] if safe_hole > 0.3 else [],
     )
     
     return fig
