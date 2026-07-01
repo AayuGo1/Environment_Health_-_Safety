@@ -1,22 +1,15 @@
-# Enterprise EHS Dashboard Dependencies
-# Core Framework
-streamlit>=1.36.0
-pandas>=2.2.0
-numpy>=1.26.0
-
-# Visualization & Export
-plotly>=5.22.0
-kaleido>=0.2.1  # Required for PNG/PDF export of Plotly charts
-xlsxwriter>=3.2.0
-openpyxl>=3.1.5
-Pillow>=10.4.0
-
-# Data Access & Utilities
-requests>=2.32.0
-python-dateutil>=2.9.0
-tenacity>=8.5.0  # Automatic retry logic for GitHub API calls
-loguru>=0.7.2    # Professional structured logging
-
-# Type Safety & Validation
-pydantic>=2.8.0  # Data model validation for Excel parsing
-typing-extensions>=4.12.0
+streamlit==1.40.1
+pandas==2.2.3
+numpy==1.26.4
+plotly==5.24.1
+openpyxl==3.1.5
+requests==2.32.3
+Pillow==10.4.0
+xlsxwriter==3.2.0
+python-dateutil==2.9.0
+tenacity==8.5.0
+loguru==0.7.2
+pydantic==2.9.2
+typing-extensions==4.12.2
+kaleido==0.2.1
+scipy==1.14.1
