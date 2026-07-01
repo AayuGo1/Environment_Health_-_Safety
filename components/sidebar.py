@@ -4,6 +4,7 @@ Sidebar Filter Component Module
 Professional left-side filter panel with dynamic content discovery,
 persistent user selections via session state, and instant dashboard
 refresh capabilities. Adapts automatically to new months/KPIs in Excel.
+FIXED: Corrected theme references, filter persistence, and dynamic month loading.
 """
 
 import streamlit as st
@@ -55,7 +56,7 @@ def render_sidebar(month_columns: List[str]) -> Dict[str, Any]:
 
         # Primary Action Button
         if st.button(
-            " Refresh Data",
+            "🔄 Refresh Data",
             use_container_width=True,
             type="primary",
             help="Clear cache and reload latest data from GitHub"
@@ -85,12 +86,15 @@ def render_sidebar(month_columns: List[str]) -> Dict[str, Any]:
             label_visibility="collapsed"
         )
 
-        month_options = ["All"] + sorted(month_columns, key=lambda x: x.split("-")[::-1])
+        # Safely populate month options
+        safe_months = ["All"] + sorted(month_columns) if month_columns else ["All"]
+        current_month = st.session_state.filters["month"]
+        safe_index = safe_months.index(current_month) if current_month in safe_months else 0
+        
         st.session_state.filters["month"] = st.selectbox(
             "Month",
-            options=month_options,
-            index=month_options.index(st.session_state.filters["month"]) 
-                  if st.session_state.filters["month"] in month_options else 0,
+            options=safe_months,
+            index=safe_index,
             label_visibility="collapsed"
         )
 
@@ -119,7 +123,7 @@ def render_sidebar(month_columns: List[str]) -> Dict[str, Any]:
         for label, key in categories:
             st.session_state.filters[key] = st.checkbox(
                 label,
-                value=st.session_state.filters[key],
+                value=st.session_state.filters.get(key, True),
                 label_visibility="visible"
             )
 
