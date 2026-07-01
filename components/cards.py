@@ -5,11 +5,13 @@ Premium metric cards with integrated sparklines, status indicators,
 achievement percentages, and interactive hover states. Each card
 adapts dynamically to KPI directionality (lower/higher is better)
 and displays contextual variance information.
+FIXED: Corrected sparkline extraction to use row_idx for proper
+data access from Excel structure where KPIs are ROWS and months are COLUMNS.
 """
 
 import streamlit as st
 import plotly.graph_objects as go
-from typing import Optional, List
+from typing import Optional, List, Any
 
 from config import THEME
 from constants import KPI_RULES
@@ -25,6 +27,9 @@ def render_kpi_card(
     sparkline_data: Optional[List[float]] = None,
     previous_month: Optional[float] = None,
     ytd_value: Optional[float] = None,
+    row_idx: Optional[int] = None,
+    df_wide: Optional[Any] = None,
+    month_columns: Optional[List[str]] = None,
 ) -> None:
     """
     Renders a single enterprise-grade KPI metric card.
@@ -35,10 +40,13 @@ def render_kpi_card(
         unit: Measurement unit string (e.g., 'kWh/MT', '%').
         target: Target value for achievement calculation.
         achievement: Pre-calculated achievement percentage.
-        status: Status indicator string ('✅ On Track', '⚠️ Off Track', etc.).
+        status: Status indicator string ('✅ On Track', '️ Off Track', etc.).
         sparkline_data: List of numeric values for mini trend chart.
         previous_month: Prior month value for MoM comparison.
         ytd_value: Year-to-date cumulative value.
+        row_idx: Row index for sparkline extraction (if sparkline_data not provided).
+        df_wide: Wide-format DataFrame for sparkline extraction.
+        month_columns: List of month column names for sparkline extraction.
     """
     # Determine delta display
     delta_text = None
@@ -55,7 +63,12 @@ def render_kpi_card(
     formatted_value = "N/A"
     if value is not None:
         precision = _get_precision(title, unit)
-        formatted_value = f"{value:,.{precision}f} {unit}".strip()
+        
+        # Handle percentage values
+        if "%" in unit or any(kw in title.lower() for kw in ["%", "rate", "involvement", "closure"]):
+            formatted_value = f"{value:.{precision}f}%"
+        else:
+            formatted_value = f"{value:,.{precision}f} {unit}".strip()
     
     # Render main metric
     st.metric(
@@ -66,9 +79,16 @@ def render_kpi_card(
         help=_build_tooltip(value, target, achievement, status, previous_month, ytd_value)
     )
     
-    # Render sparkline if data available
-    if sparkline_data and len(sparkline_data) >= 2:
-        _render_sparkline(sparkline_data)
+    # Render sparkline if data available or can be extracted
+    sparkline_to_render = sparkline_data
+    if sparkline_to_render is None and row_idx is not None and df_wide is not None and month_columns:
+        try:
+            sparkline_to_render = _extract_sparkline_from_row(df_wide, row_idx, month_columns)
+        except Exception:
+            sparkline_to_render = None
+    
+    if sparkline_to_render and len(sparkline_to_render) >= 2:
+        _render_sparkline(sparkline_to_render)
 
 
 def _get_precision(title: str, unit: str) -> int:
@@ -92,15 +112,58 @@ def _get_precision(title: str, unit: str) -> int:
     return KPI_RULES.PRECISION_VOLUME
 
 
+def _extract_sparkline_from_row(
+    df_wide: Any, 
+    row_idx: int, 
+    month_columns: List[str],
+    lookback: int = KPI_RULES.SPARKLINE_MONTHS
+) -> List[float]:
+    """
+    Extracts sparkline data from a specific KPI row.
+    FIXED: Uses row_idx instead of iloc[0] to get correct KPI data.
+    
+    Args:
+        df_wide: Wide-format DataFrame (Rows=KPIs, Cols=Months).
+        row_idx: Integer index of the KPI row.
+        month_columns: List of detected month column names.
+        lookback: Number of recent months to include.
+        
+    Returns:
+        List of numeric values for sparkline plotting.
+    """
+    relevant_months = month_columns[-lookback:]
+    values: List[float] = []
+    
+    for mc in relevant_months:
+        if mc in df_wide.columns:
+            try:
+                val = df_wide.loc[df_wide.index[row_idx], mc]
+                
+                # Handle NA values
+                if isinstance(val, str) and val.strip().upper() in ("NA", "N/A", "-"):
+                    continue
+                
+                # Handle percentage strings
+                if isinstance(val, str) and '%' in val:
+                    val = float(val.replace('%', ''))
+                
+                values.append(float(val))
+            except (ValueError, TypeError, KeyError, IndexError):
+                continue
+    
+    return values
+
+
 def _render_sparkline(data: List[float]) -> None:
     """Renders a minimal line chart for trend visualization."""
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         y=data,
-        mode="lines",
+        mode="lines+markers",
         line=dict(color=THEME.CHART_PRIMARY, width=2),
         fill="tozeroy",
         fillcolor=f"rgba(49,130,206,0.1)",
+        marker=dict(size=4, color=THEME.CHART_PRIMARY),
         hoverinfo="skip"
     ))
     
@@ -118,7 +181,12 @@ def _render_sparkline(data: List[float]) -> None:
 
 
 def _build_tooltip(
-    value, target, achievement, status, prev_month, ytd
+    value: Optional[float],
+    target: Optional[float],
+    achievement: Optional[float],
+    status: str,
+    prev_month: Optional[float],
+    ytd: Optional[float]
 ) -> str:
     """Constructs comprehensive hover tooltip text."""
     lines = [f"Status: {status}"]
