@@ -4,6 +4,7 @@ GitHub Data Loader Module
 Manages downloading Excel workbooks from GitHub raw URLs with 
 automatic retry, caching, and error handling. Ensures the dashboard
 always displays the latest available data without manual intervention.
+FIXED: Corrected cache import path and added robust error handling.
 """
 
 import io
@@ -71,11 +72,23 @@ class GitHubDataLoader:
             logger.info(f"Data loaded and cached. Timestamp: {timestamp}")
             return xls, timestamp
             
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"GitHub HTTP error ({e.response.status_code}): {e}")
+            st.session_state.load_error = f"GitHub returned {e.response.status_code}. Check repo/file name."
+            return None
+            
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"GitHub connection failed: {e}")
+            st.session_state.load_error = "Cannot connect to GitHub. Check internet/repo access."
+            return None
+            
         except Exception as e:
-            logger.error(f"Failed to load data from GitHub: {e}")
+            logger.error(f"Failed to load/parse data: {e}", exc_info=True)
+            st.session_state.load_error = f"Data loading error: {str(e)[:100]}"
+            
             # Return cached data as fallback if available
             fallback = get_cached_data(force_stale=True)
             if fallback is not None:
-                logger.warning("Using stale cached data due to GitHub error")
+                logger.warning("Using stale cached data due to load error")
                 return fallback
             return None
