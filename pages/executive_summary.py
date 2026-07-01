@@ -3,16 +3,22 @@ Executive Summary Page Module
 ===============================
 Top-level dashboard view displaying aggregated KPI performance,
 overall achievement status, and cross-domain trend indicators.
-Serves as the primary landing page for senior management review.
+FIXED: Corrected data access pattern to use row_idx from kpi_metadata
+instead of broken iloc[0] assumption. Matches Excel structure where
+KPIs are ROWS and months are COLUMNS.
 """
 
 import streamlit as st
 import pandas as pd
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 from config import THEME
 from components.cards import render_kpi_card
-from analytics.calculations import calculate_achievement, extract_sparkline_data, compute_ytd_summary
+from analytics.calculations import (
+    calculate_achievement, 
+    extract_sparkline_data, 
+    compute_ytd_summary
+)
 
 
 def render_executive_summary(parsed_data: Dict[str, Any]) -> None:
@@ -44,36 +50,52 @@ def render_executive_summary(parsed_data: Dict[str, Any]) -> None:
     env_sheet = parsed_data.get("Environment")
     hs_sheet = parsed_data.get("Health & Safety")
     
-    if env_sheet is None:
-        st.warning("⚠️ Environment sheet not found in workbook")
+    if env_sheet is None and hs_sheet is None:
+        st.warning("️ No data sheets found in workbook")
         return
 
     # Define priority KPIs for executive view (discovered dynamically)
     priority_kpis = _identify_priority_kpis(env_sheet, hs_sheet)
+    
+    if not priority_kpis:
+        st.info("ℹ️ No KPIs with valid data found for executive summary")
+        return
     
     # Render KPI cards in responsive grid
     cols = st.columns(min(len(priority_kpis), 4))
     for idx, kpi_info in enumerate(priority_kpis):
         col_idx = idx % len(cols)
         with cols[col_idx]:
-            _render_executive_kpi_card(kpi_info, env_sheet, hs_sheet)
+            _render_executive_kpi_card(kpi_info)
 
     # Overall Performance Status Section
     st.divider()
     _render_overall_status_section(parsed_data)
 
 
-def _identify_priority_kpis(env_sheet, hs_sheet) -> list:
+def _identify_priority_kpis(env_sheet: Optional[Any], hs_sheet: Optional[Any]) -> List[Dict]:
     """Identifies top-priority KPIs for executive display based on metadata."""
     priority = []
-    
-    # From Environment sheet - select one representative per subcategory
-    env_meta = env_sheet.kpi_metadata
     seen_categories = set()
     
-    for kpi_name, meta in env_meta.items():
-        cat = meta.get("category", "")
-        if cat not in seen_categories and meta.get("target") is not None:
+    # Process Environment sheet first
+    if env_sheet and hasattr(env_sheet, 'kpi_metadata'):
+        for kpi_name, meta in env_sheet.kpi_metadata.items():
+            cat = meta.get("category", "")
+            row_idx = meta.get("row_idx")
+            
+            # Skip if no row index or already seen this category
+            if row_idx is None or cat in seen_categories:
+                continue
+                
+            # Validate that this KPI has actual numeric data
+            try:
+                test_val = float(env_sheet.df_wide.loc[env_sheet.df_wide.index[row_idx], env_sheet.month_columns[0]])
+                if pd.isna(test_val):
+                    continue
+            except (ValueError, TypeError, KeyError, IndexError):
+                continue
+            
             priority.append({
                 "name": kpi_name,
                 "metadata": meta,
@@ -81,16 +103,27 @@ def _identify_priority_kpis(env_sheet, hs_sheet) -> list:
                 "sheet": env_sheet,
             })
             seen_categories.add(cat)
-            
-        if len(priority) >= 4:
-            break
+                
+            if len(priority) >= 4:
+                break
     
     # Add critical H&S KPIs if available
-    if hs_sheet:
-        hs_meta = hs_sheet.kpi_metadata
-        for kpi_name, meta in hs_meta.items():
+    if hs_sheet and hasattr(hs_sheet, 'kpi_metadata'):
+        for kpi_name, meta in hs_sheet.kpi_metadata.items():
             if any(kw in kpi_name.lower() for kw in ["fatality", "injury", "closure"]):
-                if meta.get("target") is not None and len(priority) < 6:
+                row_idx = meta.get("row_idx")
+                if row_idx is None:
+                    continue
+                    
+                # Validate data exists
+                try:
+                    test_val = float(hs_sheet.df_wide.loc[hs_sheet.df_wide.index[row_idx], hs_sheet.month_columns[0]])
+                    if pd.isna(test_val):
+                        continue
+                except (ValueError, TypeError, KeyError, IndexError):
+                    continue
+                    
+                if len(priority) < 6:
                     priority.append({
                         "name": kpi_name,
                         "metadata": meta,
@@ -101,31 +134,49 @@ def _identify_priority_kpis(env_sheet, hs_sheet) -> list:
     return priority[:6]  # Max 6 executive KPIs
 
 
-def _render_executive_kpi_card(kpi_info: dict, env_sheet, hs_sheet) -> None:
+def _render_executive_kpi_card(kpi_info: Dict) -> None:
     """Renders a single executive KPI card with full metrics."""
     name = kpi_info["name"]
     meta = kpi_info["metadata"]
     sheet = kpi_info["sheet"]
+    row_idx = meta.get("row_idx")
     
-    # Get current value (first row = latest month)
-    col = meta["full_column"]
-    try:
-        current_val = float(sheet.df_wide.iloc[0][col])
-    except (ValueError, TypeError, IndexError):
-        current_val = None
+    if row_idx is None:
+        st.metric(label=name, value="N/A", delta="Missing Row Index")
+        return
+    
+    # Get current value (latest month column)
+    latest_month = sheet.month_columns[-1] if sheet.month_columns else None
+    current_val = None
+    if latest_month and latest_month in sheet.df_wide.columns:
+        try:
+            raw_val = sheet.df_wide.loc[sheet.df_wide.index[row_idx], latest_month]
+            if isinstance(raw_val, str) and '%' in raw_val:
+                current_val = float(raw_val.replace('%', ''))
+            else:
+                current_val = float(raw_val)
+        except (ValueError, TypeError, KeyError, IndexError):
+            current_val = None
     
     # Calculate achievement
     target = meta.get("target")
     lower_better = meta.get("lower_is_better", False)
     achievement, variance, status = calculate_achievement(current_val, target, lower_better)
     
-    # Extract sparkline data
+    # Extract sparkline data using correct row index
     sparkline = extract_sparkline_data(
-        sheet.df_wide, col, sheet.month_columns
+        df_wide=sheet.df_wide,
+        row_idx=row_idx,
+        month_columns=sheet.month_columns
     )
     
-    # Compute YTD
-    ytd = compute_ytd_summary(sheet.df_wide, col, sheet.ytd_column)
+    # Compute YTD using correct row index
+    ytd = compute_ytd_summary(
+        df_wide=sheet.df_wide,
+        row_idx=row_idx,
+        ytd_column=sheet.ytd_column,
+        month_columns=sheet.month_columns
+    )
     
     # Get unit from metadata
     unit = meta.get("unit", "")
@@ -149,27 +200,46 @@ def _render_overall_status_section(parsed_data: Dict[str, Any]) -> None:
     off_track = 0
     
     for category, sheet in parsed_data.items():
+        if not hasattr(sheet, 'kpi_metadata'):
+            continue
+            
         for kpi_name, meta in sheet.kpi_metadata.items():
-            if meta.get("target") is None:
+            target = meta.get("target")
+            if target is None:
                 continue
                 
-            col = meta["full_column"]
-            try:
-                val = float(sheet.df_wide.iloc[0][col])
-            except (ValueError, TypeError):
+            row_idx = meta.get("row_idx")
+            if row_idx is None:
                 continue
-            
-            _, _, status = calculate_achievement(
-                val, meta["target"], meta.get("lower_is_better", False)
-            )
-            total_kpis += 1
-            if "On Track" in status:
-                on_track += 1
-            else:
-                off_track += 1
+                
+            # Get latest month value for this KPI
+            latest_month = sheet.month_columns[-1] if sheet.month_columns else None
+            if not latest_month or latest_month not in sheet.df_wide.columns:
+                continue
+                
+            try:
+                raw_val = sheet.df_wide.loc[sheet.df_wide.index[row_idx], latest_month]
+                if isinstance(raw_val, str) and '%' in raw_val:
+                    val = float(raw_val.replace('%', ''))
+                else:
+                    val = float(raw_val)
+                    
+                if pd.isna(val):
+                    continue
+                    
+                _, _, status = calculate_achievement(
+                    val, target, meta.get("lower_is_better", False)
+                )
+                total_kpis += 1
+                if "On Track" in status:
+                    on_track += 1
+                else:
+                    off_track += 1
+            except (ValueError, TypeError, KeyError, IndexError):
+                continue
     
     if total_kpis == 0:
-        st.info("ℹ️ No KPIs with targets found for status calculation")
+        st.info("ℹ️ No KPIs with targets and valid data found for status calculation")
         return
     
     pct_on_track = round((on_track / total_kpis) * 100, 1)
