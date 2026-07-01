@@ -3,16 +3,21 @@ Excel Parser Module
 ====================
 Dynamically parses H&S and Environment sheets with 3-level headers.
 Discovers all KPIs, months, targets, and categories automatically.
-Zero hardcoding - adapts to structural changes in monthly reports.
+FIXED: Corrected data access pattern to treat KPIs as ROWS 
+and months as COLUMNS, matching actual Excel workbook structure.
 """
 
 import re
+import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 import pandas as pd
+import numpy as np
 
-from constants import EXCEL, KPICategory, IndicatorType
+from constants import EXCEL, KPICategory
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -20,10 +25,10 @@ class ParsedSheet:
     """Normalized representation of a parsed Excel sheet."""
     name: str
     category: KPICategory
-    df_wide: pd.DataFrame          # Original wide format for card rendering
+    df_wide: pd.DataFrame          # Wide format: Rows=KPIs, Cols=Months
     df_long: pd.DataFrame          # Long format for charting/trends
     month_columns: List[str]       # Detected month columns
-    kpi_metadata: Dict[str, Dict]  # KPI → {unit, target, lower_is_better}
+    kpi_metadata: Dict[str, Dict]  # KPI Name → {full_column, unit, target, lower_is_better, row_idx}
     ytd_column: Optional[str]
     target_column: Optional[str]
 
@@ -51,6 +56,8 @@ class ExcelParser:
             parsed = self._parse_single_sheet(sheet_name, category)
             if parsed is not None:
                 results[category] = parsed
+            else:
+                logger.warning(f"Failed to parse sheet '{sheet_name}', skipping.")
         return results
 
     def _parse_single_sheet(
@@ -83,10 +90,11 @@ class ExcelParser:
             ytd_col = next((c for c in df.columns if '|YTD' in c.upper()), None)
             target_col = next((c for c in df.columns if '|TARGET' in c.upper()), None)
             
-            # Build KPI metadata
+            # Build KPI metadata with ROW INDEX mapping
             kpi_meta = self._extract_kpi_metadata(df, month_cols, ytd_col, target_col)
             
             # Create long-format dataframe for charting
+            # Melt only month columns; keep KPI identifier columns as id_vars
             id_vars = [c for c in df.columns if c not in month_cols]
             df_long = df.melt(id_vars=id_vars, value_vars=month_cols, 
                             var_name="Month", value_name="Value")
@@ -103,23 +111,45 @@ class ExcelParser:
             )
             
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Failed to parse sheet '{sheet_name}': {e}")
+            logger.error(f"Failed to parse sheet '{sheet_name}': {e}", exc_info=True)
             return None
 
     def _extract_kpi_metadata(
         self, df: pd.DataFrame, month_cols: List[str],
         ytd_col: Optional[str], target_col: Optional[str]
     ) -> Dict[str, Dict]:
-        """Extracts unit, target, and directionality for each KPI."""
+        """
+        Extracts unit, target, directionality, and ROW INDEX for each KPI.
+        FIXED: Now maps KPI names to their row index in df_wide for correct data access.
+        """
         from constants import KPI_RULES
         
         metadata = {}
         non_month_cols = [c for c in df.columns if c not in month_cols]
         
-        for col in non_month_cols:
-            parts = col.split(EXCEL.HEADER_SEPARATOR)
-            kpi_name = parts[-1].strip() if len(parts) > 0 else col
+        # Determine which column contains the KPI name/identifier
+        # Usually it's the first non-month column or a specific named column
+        kpi_id_col = next((c for c in non_month_cols if 'KPI' in c.upper() or 'NAME' in c.upper()), non_month_cols[0] if non_month_cols else None)
+        
+        for idx in range(len(df)):
+            # Get the KPI identifier from this row
+            kpi_identifier = str(df.iloc[idx][kpi_id_col]).strip() if kpi_id_col else f"Row_{idx}"
+            
+            # Find the most descriptive column name for this row's KPI
+            # We'll use the first non-month, non-id column that has data as the "primary" column
+            primary_data_col = None
+            for col in non_month_cols:
+                if col != kpi_id_col and not pd.isna(df.iloc[idx][col]):
+                    val = str(df.iloc[idx][col]).strip()
+                    if val and val not in EXCEL.NA_VALUES:
+                        primary_data_col = col
+                        break
+            
+            if primary_data_col is None:
+                continue
+                
+            parts = primary_data_col.split(EXCEL.HEADER_SEPARATOR)
+            kpi_name = parts[-1].strip() if len(parts) > 0 else primary_data_col
             
             # Extract unit from bracket notation
             unit = ""
@@ -134,20 +164,25 @@ class ExcelParser:
                 for kw in KPI_RULES.LOWER_IS_BETTER_KEYWORDS
             )
             
-            # Get target value (first row assumed to be current period)
+            # Get target value from the target column for THIS ROW
             target_val = None
             if target_col and target_col in df.columns:
+                raw_target = df.iloc[idx][target_col]
                 try:
-                    target_val = float(df.iloc[0][target_col])
-                except (ValueError, TypeError, IndexError):
+                    if isinstance(raw_target, str) and '%' in raw_target:
+                        target_val = float(raw_target.replace('%', ''))
+                    else:
+                        target_val = float(raw_target)
+                except (ValueError, TypeError):
                     pass
             
             metadata[kpi_name] = {
-                "full_column": col,
+                "full_column": primary_data_col,
                 "unit": unit,
                 "target": target_val,
                 "lower_is_better": lower_better,
                 "category": parts[0].strip() if len(parts) > 0 else "Unknown",
+                "row_idx": idx,  # CRITICAL FIX: Store row index for data access
             }
         
         return metadata
